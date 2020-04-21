@@ -207,7 +207,7 @@ Page {
         ignoreUnknownSignals: true
         // Animate overlay to top if needed.
         onCountChanged: webView.handleModelChanges(false)
-        onWaitingForNewTabChanged: window.opaqueBackground = webView.tabModel.waitingForNewTab
+        onWaitingForNewTabChanged: window.opaqueBackground = false
     }
 
     InputRegion {
@@ -221,7 +221,7 @@ Page {
     Browser.DimmerEffect {
         id: contentDimmer
 
-        readonly property bool canOpenContentDimmer: webView.activeTabRendered && overlay.animator.atBottom
+        readonly property bool canOpenContentDimmer: false
 
         width: browserPage.width
         height: Math.ceil(overlay.y)
@@ -280,7 +280,7 @@ Page {
         historyModel: historyModel
         browserPage: browserPage
 
-        onEnteringNewTabUrlChanged: window.opaqueBackground = webView.tabModel.waitingForNewTab || enteringNewTabUrl
+        onEnteringNewTabUrlChanged: window.opaqueBackground = false
 
         animator.onAtBottomChanged: {
             if (!animator.atBottom) {

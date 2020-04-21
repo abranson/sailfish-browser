@@ -52,7 +52,7 @@ DeclarativeWebPage::DeclarativeWebPage(QObject *parent)
     , m_userHasDraggedWhileLoading(false)
     , m_fullscreen(false)
     , m_forcedChrome(false)
-    , m_domContentLoaded(false)
+    , m_domContentLoaded(true)
     , m_initialLoadHasHappened(false)
     , m_tabHistoryReady(false)
     , m_urlReady(false)
@@ -282,7 +282,7 @@ void DeclarativeWebPage::loadTab(const QString &newUrl, bool force)
     setChrome(true);
     QString oldUrl = url().toString();
     if ((!newUrl.isEmpty() && oldUrl != newUrl) || force) {
-        m_domContentLoaded = false;
+        //m_domContentLoaded = false;
         emit domContentLoadedChanged();
         load(newUrl);
     }
