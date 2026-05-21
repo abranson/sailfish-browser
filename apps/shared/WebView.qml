@@ -283,11 +283,16 @@ WebContainer {
             return Qt.size(0, 0)
         }
 
-        var ratio = Math.min(
-                    browserPage.width / browserPage.thumbnailSize.width,
-                    browserPage.height / browserPage.thumbnailSize.height)
-        var width = browserPage.thumbnailSize.width * ratio
-        var height = browserPage.thumbnailSize.height * ratio
+        var pageWidth = Math.min(browserPage.width, browserPage.height)
+        var pageHeight = Math.max(browserPage.width, browserPage.height)
+        var thumbnailWidth = pageWidth - Theme.horizontalPageMargin * 2
+        var thumbnailHeight = Math.max(pageHeight / 2.5, pageWidth / 1.66)
+                - (Theme.iconSizeSmall + Theme.paddingMedium * 2)
+
+        var ratio = Math.min(pageWidth / thumbnailWidth,
+                             pageHeight / thumbnailHeight)
+        var width = thumbnailWidth * ratio
+        var height = thumbnailHeight * ratio
 
         return Qt.size(width, height)
     }

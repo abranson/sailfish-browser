@@ -150,6 +150,7 @@ BackgroundItem {
                 asynchronous: true
                 opacity: status !== Image.Ready && source !== "" ? 0.0 : 1.0
                 fillMode: Image.PreserveAspectCrop
+                horizontalAlignment: Image.AlignLeft
                 verticalAlignment: Image.AlignTop
                 Behavior on opacity { FadeAnimation {} }
 

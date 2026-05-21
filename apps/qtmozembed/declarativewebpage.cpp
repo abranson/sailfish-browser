@@ -18,6 +18,7 @@
 #include <qmozwindow.h>
 #include <qmozsecurity.h>
 
+#include <QBuffer>
 #include <QGuiApplication>
 #include <QtConcurrent>
 
@@ -427,6 +428,18 @@ void DeclarativeWebPage::updateMetadataTitle(const QString &title)
 
 void DeclarativeWebPage::grabToFile(const QSize &size)
 {
+    if (m_container) {
+        m_grabResult.clear();
+        const QImage image = m_container->grabContentImage(size);
+        if (!image.isNull() && active()) {
+            m_grabWriter.setFuture(QtConcurrent::run(
+                    &DeclarativeWebPage::saveToFile,
+                    image,
+                    QStringLiteral("%1/tab-%2-thumb.jpg").arg(BrowserPaths::cacheLocation()).arg(tabId())));
+        }
+        return;
+    }
+
     // grabToImage handles invalid geometry.
     m_grabResult = grabToImage(size);
     if (m_grabResult && active()) {
@@ -443,6 +456,24 @@ void DeclarativeWebPage::grabToFile(const QSize &size)
 
 void DeclarativeWebPage::grabThumbnail(const QSize &size)
 {
+    if (m_container) {
+        m_thumbnailResult.clear();
+        const QImage image = m_container->grabContentImage(size);
+        if (!image.isNull() && active()) {
+            QByteArray iconData;
+            QBuffer buffer(&iconData);
+            buffer.open(QIODevice::WriteOnly);
+            if (image.save(&buffer, "jpg", 75)) {
+                buffer.close();
+                emit thumbnailResult(QStringLiteral("data:image/jpeg;base64,")
+                                     + QString::fromLatin1(iconData.toBase64()));
+            } else {
+                emit thumbnailResult(FaviconManager::defaultDesktopBookmarkIcon());
+            }
+        }
+        return;
+    }
+
     m_thumbnailResult = grabToImage(size);
     if (m_thumbnailResult && active()) {
         connect(m_thumbnailResult.data(), &QMozGrabResult::ready,

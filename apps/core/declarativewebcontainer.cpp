@@ -28,6 +28,7 @@
 #include <QScreen>
 #include <QMetaMethod>
 #include <QOpenGLFunctions_ES2>
+#include <QOpenGLFramebufferObject>
 #include <QOpenGLShaderProgram>
 #include <QGuiApplication>
 #include <QResizeEvent>
@@ -108,6 +109,63 @@ static void updateTextureCoordinates(Qt::ScreenOrientation orientation, GLfloat 
         coordinates[i * 2] = corners[i][0];
         coordinates[i * 2 + 1] = corners[i][1];
     }
+}
+
+static bool isLandscapeOrientation(Qt::ScreenOrientation orientation)
+{
+    return orientation == Qt::LandscapeOrientation
+            || orientation == Qt::InvertedLandscapeOrientation;
+}
+
+static QSizeF sizeForOrientation(const QSizeF &size, Qt::ScreenOrientation orientation)
+{
+    if (!size.isValid() || size.width() <= 0.0 || size.height() <= 0.0) {
+        return size;
+    }
+
+    const bool sizeLandscape = size.width() >= size.height();
+    if (sizeLandscape != isLandscapeOrientation(orientation)) {
+        return QSizeF(size.height(), size.width());
+    }
+
+    return size;
+}
+
+static void applyTextureRect(const QRectF &rect, GLfloat *coordinates)
+{
+    if (rect.left() <= 0.0 && rect.top() <= 0.0
+            && rect.width() >= 1.0 && rect.height() >= 1.0) {
+        return;
+    }
+
+    for (int i = 0; i < 4; ++i) {
+        const GLfloat u = coordinates[i * 2];
+        const GLfloat v = coordinates[i * 2 + 1];
+        const GLfloat topOriginY = 1.0f - v;
+        coordinates[i * 2] = rect.left() + u * rect.width();
+        coordinates[i * 2 + 1] = 1.0f - (rect.top() + topOriginY * rect.height());
+    }
+}
+
+static QImage readCurrentFramebuffer(const QSize &size)
+{
+    while (glGetError()) {}
+
+    QImage image(size, QImage::Format_RGB32);
+    glReadPixels(0, 0, size.width(), size.height(), GL_BGRA_EXT,
+                 GL_UNSIGNED_BYTE, image.bits());
+    if (glGetError() == GL_NO_ERROR) {
+        return image.mirrored();
+    }
+
+    QImage rgbaImage(size, QImage::Format_RGBX8888);
+    glReadPixels(0, 0, size.width(), size.height(), GL_RGBA,
+                 GL_UNSIGNED_BYTE, rgbaImage.bits());
+    if (glGetError() == GL_NO_ERROR) {
+        return rgbaImage.mirrored();
+    }
+
+    return QImage();
 }
 
 DeclarativeWebContainer::DeclarativeWebContainer(QWindow *parent)
@@ -704,6 +762,94 @@ bool DeclarativeWebContainer::activatePage(const Tab& tab, bool force, bool from
     return false;
 }
 
+QImage DeclarativeWebContainer::grabContentImage(const QSize &size)
+{
+    if (!isExposed() || !m_mozWindow || !m_webPage || !m_webPage->active()) {
+        return QImage();
+    }
+
+    const QSize targetSize = size.isEmpty() ? webContentSize() : size;
+    if (!targetSize.isValid() || targetSize.width() <= 0 || targetSize.height() <= 0) {
+        qWarning() << "Cannot grab browser WebRender frame with invalid size" << targetSize;
+        return QImage();
+    }
+
+    if (!ensureRenderContext() || !ensureTextureProgram()) {
+        return QImage();
+    }
+
+    QSize textureSize;
+    if (!bindWebRenderFrameTexture(&textureSize)) {
+        qWarning() << "No WebRender EGLImage available for browser frame grab";
+        return QImage();
+    }
+
+    QOpenGLFramebufferObject frameBuffer(targetSize);
+    if (!frameBuffer.isValid() || !frameBuffer.bind()) {
+        qWarning() << "Failed to create browser WebRender frame grab buffer" << targetSize;
+        return QImage();
+    }
+
+    glViewport(0, 0, targetSize.width(), targetSize.height());
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_STENCIL_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_SCISSOR_TEST);
+    const QColor clearColor = opaqueSurfaceColor(m_webContentBackgroundColor);
+    glClearColor(clearColor.redF(), clearColor.greenF(), clearColor.blueF(), 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    const Qt::ScreenOrientation contentOrientation = m_mozWindow->contentOrientation();
+    const QRectF contentRect = m_webPage->contentRect();
+    const qreal contentResolution = m_webPage->resolution();
+    const qreal toolbarHeight = qMax(m_webPage->toolbarHeight(),
+                                     static_cast<qreal>(m_webPage->dynamicToolbarHeight()));
+    QSizeF drawSize = contentResolution > 0.0
+            ? contentRect.size() * contentResolution
+            : QSizeF();
+    if (toolbarHeight > 0.0 && drawSize.height() > toolbarHeight) {
+        drawSize.setHeight(drawSize.height() - toolbarHeight);
+    }
+    if (!drawSize.isValid() || drawSize.width() <= 0.0 || drawSize.height() <= 0.0) {
+        drawSize = sizeForOrientation(m_mozWindow->size(), contentOrientation);
+    }
+    if (!drawSize.isValid() || drawSize.width() <= 0.0 || drawSize.height() <= 0.0) {
+        drawSize = sizeForOrientation(webContentSize(), contentOrientation);
+    }
+    if (!drawSize.isValid() || drawSize.width() <= 0.0 || drawSize.height() <= 0.0) {
+        drawSize = sizeForOrientation(textureSize, contentOrientation);
+    }
+    if (!drawSize.isValid() || drawSize.width() <= 0.0 || drawSize.height() <= 0.0) {
+        drawSize = targetSize;
+    }
+    const QSizeF sourceSize = drawSize;
+    drawSize.scale(targetSize, Qt::KeepAspectRatioByExpanding);
+    const Qt::ScreenOrientation grabOrientation = qApp->primaryScreen()
+            ? qApp->primaryScreen()->primaryOrientation()
+            : contentOrientation;
+
+    QRectF textureRect(0.0, 0.0, 1.0, 1.0);
+    if (textureSize.width() > 0 && textureSize.height() > 0) {
+        textureRect.setWidth(qBound<qreal>(0.0, sourceSize.width() / textureSize.width(), 1.0));
+        textureRect.setHeight(qBound<qreal>(0.0, sourceSize.height() / textureSize.height(), 1.0));
+    }
+
+    const QRectF targetRect(0.0, 0.0, drawSize.width(), drawSize.height());
+    QImage image;
+    if (drawWebRenderFrame(targetRect, QSizeF(targetSize), grabOrientation,
+                           textureRect)) {
+        image = readCurrentFramebuffer(targetSize);
+    } else {
+        qWarning() << "Browser WebRender frame grab draw failed"
+                   << "textureSize" << textureSize << "targetSize" << targetSize;
+    }
+
+    frameBuffer.release();
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    return image;
+}
+
 int DeclarativeWebContainer::tabId(uint32_t uniqueId) const
 {
     if (m_webPages) {
@@ -824,6 +970,96 @@ bool DeclarativeWebContainer::ensureTextureProgram()
 
     m_textureProgram = program;
     return true;
+}
+
+bool DeclarativeWebContainer::bindWebRenderFrameTexture(QSize *textureSize)
+{
+    static const PFNGLEGLIMAGETARGETTEXTURE2DOESPROC glEGLImageTargetTexture2DOES =
+            reinterpret_cast<PFNGLEGLIMAGETARGETTEXTURE2DOESPROC>(
+                eglGetProcAddress("glEGLImageTargetTexture2DOES"));
+    if (!glEGLImageTargetTexture2DOES) {
+        qWarning() << "glEGLImageTargetTexture2DOES unavailable";
+        return false;
+    }
+
+    bool hasImage = false;
+
+    m_mozWindow->getPlatformImage([&](void *platformImage, int width, int height) {
+        if (!platformImage || width <= 0 || height <= 0) {
+            return;
+        }
+
+        if (m_frameTexture == 0) {
+            glGenTextures(1, &m_frameTexture);
+        }
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_EXTERNAL_OES, m_frameTexture);
+        glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glEGLImageTargetTexture2DOES(GL_TEXTURE_EXTERNAL_OES,
+                                     static_cast<GLeglImageOES>(platformImage));
+
+        const GLenum error = glGetError();
+        if (error != GL_NO_ERROR) {
+            qWarning() << "Failed to bind browser WebRender EGLImage"
+                       << QString::number(error, 16)
+                       << "image" << platformImage << "size" << width << height;
+            return;
+        }
+
+        hasImage = true;
+        if (textureSize) {
+            *textureSize = QSize(width, height);
+        }
+    });
+
+    return hasImage && m_frameTexture != 0;
+}
+
+bool DeclarativeWebContainer::drawWebRenderFrame(const QRectF &targetRect,
+                                                 const QSizeF &surfaceSize,
+                                                 Qt::ScreenOrientation orientation,
+                                                 const QRectF &textureRect)
+{
+    if (surfaceSize.width() <= 0.0 || surfaceSize.height() <= 0.0) {
+        return false;
+    }
+
+    const GLfloat left = 2.0f * targetRect.left() / surfaceSize.width() - 1.0f;
+    const GLfloat right = 2.0f * targetRect.right() / surfaceSize.width() - 1.0f;
+    const GLfloat top = 1.0f - 2.0f * targetRect.top() / surfaceSize.height();
+    const GLfloat bottom = 1.0f - 2.0f * targetRect.bottom() / surfaceSize.height();
+    const GLfloat vertices[] = {
+        left, top,
+        left, bottom,
+        right, top,
+        right, bottom
+    };
+    GLfloat texCoords[8];
+    updateTextureCoordinates(orientation, texCoords);
+    applyTextureRect(textureRect, texCoords);
+
+    m_textureProgram->bind();
+    m_textureProgram->setUniformValue("texture", 0);
+    const int vertexAttribute = m_textureProgram->attributeLocation("aVertex");
+    const int texCoordAttribute = m_textureProgram->attributeLocation("aTexCoord");
+    m_textureProgram->enableAttributeArray(vertexAttribute);
+    m_textureProgram->enableAttributeArray(texCoordAttribute);
+    m_textureProgram->setAttributeArray(vertexAttribute, GL_FLOAT, vertices, 2);
+    m_textureProgram->setAttributeArray(texCoordAttribute, GL_FLOAT, texCoords, 2);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_EXTERNAL_OES, m_frameTexture);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+    m_textureProgram->disableAttributeArray(vertexAttribute);
+    m_textureProgram->disableAttributeArray(texCoordAttribute);
+    m_textureProgram->release();
+
+    return glGetError() == GL_NO_ERROR;
 }
 
 void DeclarativeWebContainer::dumpPages() const
@@ -1204,8 +1440,6 @@ void DeclarativeWebContainer::initialize()
         m_mozWindow = new QMozWindow(webContentSize());
         m_mozWindow->setPrimaryOrientation(screen()->primaryOrientation());
 
-        connect(m_mozWindow.data(), &QMozWindow::requestGLContext,
-                this, &DeclarativeWebContainer::createGLContext, Qt::DirectConnection);
         connect(m_mozWindow.data(), &QMozWindow::orientationChangeFiltered,
                 this, &DeclarativeWebContainer::handleContentOrientationChanged);
         connect(m_mozWindow.data(), &QMozWindow::compositingFinished,
@@ -1428,13 +1662,6 @@ void DeclarativeWebContainer::loadTab(const Tab& tab, bool force, bool fromExter
     }
 }
 
-void DeclarativeWebContainer::createGLContext()
-{
-    // WebRender uses Gecko's offscreen EGLImage path. The old
-    // external-context request can arrive on Gecko's renderer thread, where
-    // making a Qt-owned QOpenGLContext current against this window is fatal.
-}
-
 void DeclarativeWebContainer::handleCompositingFinished()
 {
     renderCompositedFrame();
@@ -1472,52 +1699,12 @@ void DeclarativeWebContainer::renderCompositedFrame()
 
     const bool completingActiveTabFrame = m_waitingForActiveTabFrame;
 
-    static const PFNGLEGLIMAGETARGETTEXTURE2DOESPROC glEGLImageTargetTexture2DOES =
-            reinterpret_cast<PFNGLEGLIMAGETARGETTEXTURE2DOESPROC>(
-                eglGetProcAddress("glEGLImageTargetTexture2DOES"));
-    if (!glEGLImageTargetTexture2DOES) {
-        qWarning() << "glEGLImageTargetTexture2DOES unavailable";
-        return;
-    }
-
     if (!ensureRenderContext() || !ensureTextureProgram()) {
         return;
     }
 
-    bool hasImage = false;
     QSize textureSize;
-
-    m_mozWindow->getPlatformImage([&](void *platformImage, int width, int height) {
-        if (!platformImage || width <= 0 || height <= 0) {
-            return;
-        }
-
-        if (m_frameTexture == 0) {
-            glGenTextures(1, &m_frameTexture);
-        }
-
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_EXTERNAL_OES, m_frameTexture);
-        glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glEGLImageTargetTexture2DOES(GL_TEXTURE_EXTERNAL_OES,
-                                     static_cast<GLeglImageOES>(platformImage));
-
-        const GLenum error = glGetError();
-        if (error != GL_NO_ERROR) {
-            qWarning() << "Failed to bind browser WebRender EGLImage"
-                       << QString::number(error, 16)
-                       << "image" << platformImage << "size" << width << height;
-            return;
-        }
-
-        hasImage = true;
-        textureSize = QSize(width, height);
-    });
-
-    if (!hasImage || m_frameTexture == 0) {
+    if (!bindWebRenderFrameTexture(&textureSize)) {
         static int noImageWarnings = 0;
         if (++noImageWarnings <= 5) {
             qWarning() << "No WebRender EGLImage available for browser frame";
@@ -1535,41 +1722,9 @@ void DeclarativeWebContainer::renderCompositedFrame()
     glClearColor(clearColor.redF(), clearColor.greenF(), clearColor.blueF(), 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 
-    const QRectF contentRect = effectiveWebContentRect();
-    const GLfloat left = 2.0f * contentRect.left() / width() - 1.0f;
-    const GLfloat right = 2.0f * contentRect.right() / width() - 1.0f;
-    const GLfloat top = 1.0f - 2.0f * contentRect.top() / height();
-    const GLfloat bottom = 1.0f - 2.0f * contentRect.bottom() / height();
-    const GLfloat vertices[] = {
-        left, top,
-        left, bottom,
-        right, top,
-        right, bottom
-    };
-    GLfloat texCoords[8];
-    updateTextureCoordinates(m_mozWindow->contentOrientation(), texCoords);
-
-    m_textureProgram->bind();
-    m_textureProgram->setUniformValue("texture", 0);
-    const int vertexAttribute = m_textureProgram->attributeLocation("aVertex");
-    const int texCoordAttribute = m_textureProgram->attributeLocation("aTexCoord");
-    m_textureProgram->enableAttributeArray(vertexAttribute);
-    m_textureProgram->enableAttributeArray(texCoordAttribute);
-    m_textureProgram->setAttributeArray(vertexAttribute, GL_FLOAT, vertices, 2);
-    m_textureProgram->setAttributeArray(texCoordAttribute, GL_FLOAT, texCoords, 2);
-
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_EXTERNAL_OES, m_frameTexture);
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-
-    m_textureProgram->disableAttributeArray(vertexAttribute);
-    m_textureProgram->disableAttributeArray(texCoordAttribute);
-    m_textureProgram->release();
-
-    const GLenum error = glGetError();
-    if (error != GL_NO_ERROR) {
+    if (!drawWebRenderFrame(effectiveWebContentRect(), QSizeF(width(), height()),
+                            m_mozWindow->contentOrientation())) {
         qWarning() << "Browser WebRender frame draw failed"
-                   << QString::number(error, 16)
                    << "textureSize" << textureSize << "windowSize" << size();
         return;
     }

@@ -16,6 +16,7 @@
 #include <QtGui/QOpenGLFunctions>
 #include <QtGui/qopengl.h>
 #include <QColor>
+#include <QImage>
 #include <QPointer>
 #include <QQmlComponent>
 #include <QQuickView>
@@ -137,6 +138,7 @@ public:
 
     bool isActiveTab(int tabId);
     bool activatePage(const Tab& tab, bool force = false, bool fromExternal = false);
+    QImage grabContentImage(const QSize &size);
     int tabId(uint32_t uniqueId) const;
     int previouslyUsedTabId() const;
     // For D-Bus interfaces
@@ -246,7 +248,6 @@ private slots:
     void updateWindowFlags();
 
     // QMozWindow related slots:
-    void createGLContext();
     void handleCompositingFinished();
     void renderCompositedFrame();
 
@@ -273,6 +274,10 @@ private:
     void clearWindowSurface();
     bool ensureRenderContext();
     bool ensureTextureProgram();
+    bool bindWebRenderFrameTexture(QSize *textureSize);
+    bool drawWebRenderFrame(const QRectF &targetRect, const QSizeF &surfaceSize,
+                            Qt::ScreenOrientation orientation,
+                            const QRectF &textureRect = QRectF(0.0, 0.0, 1.0, 1.0));
 
     QPointer<QMozWindow> m_mozWindow;
     QPointer<QQuickItem> m_rotationHandler;
