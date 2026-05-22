@@ -38,6 +38,7 @@ public:
     MOCK_METHOD(Qt::ScreenOrientation, contentOrientation, ());
     MOCK_METHOD(Qt::ScreenOrientation, pendingOrientation, ());
     MOCK_METHOD(void, getPlatformImage, (int*, int*));
+    MOCK_METHOD(void, clearPlatformImage, (void));
     MOCK_METHOD(void, suspendRendering, (void));
     MOCK_METHOD(void, resumeRendering, (void));
     MOCK_METHOD(void, scheduleUpdate, (void));

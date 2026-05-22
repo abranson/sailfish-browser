@@ -10,11 +10,11 @@
 #ifndef DECLARATIVEWEBCONTAINER_H
 #define DECLARATIVEWEBCONTAINER_H
 
-#include <qmozcontext.h>
 #include <qmozsecurity.h>
 
 #include <QtGui/QWindow>
 #include <QtGui/QOpenGLFunctions>
+#include <QtGui/qopengl.h>
 #include <QPointer>
 #include <QQmlComponent>
 #include <QQuickView>
@@ -23,6 +23,7 @@
 #include <QTimer>
 
 class QMozWindow;
+class QOpenGLShaderProgram;
 class QTimerEvent;
 class DeclarativeTabModel;
 class DeclarativeWebPage;
@@ -200,6 +201,7 @@ signals:
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
     void exposeEvent(QExposeEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
     void touchEvent(QTouchEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
@@ -225,6 +227,7 @@ private slots:
     void closeWindow();
     void updateLoadProgress();
     void updateLoading();
+    void handleActiveTabFirstPaint(int offx, int offy);
     void updateActiveTabRendered();
     void onLastViewDestroyed();
 
@@ -233,11 +236,13 @@ private slots:
 
     // QMozWindow related slots:
     void createGLContext();
+    void handleCompositingFinished();
+    void renderCompositedFrame();
 
     void handleContentOrientationChanged(Qt::ScreenOrientation orientation);
-    // Clears window surface on the compositor thread. Can be called even when there are
-    // no active views. In case this function is called too early during gecko initialization,
-    // before compositor thread has actually been started the function returns false.
+    // Attaches the first Wayland buffer for the WebRender browser window.
+    // The WebRender path does this on the UI thread and returns false so the
+    // expose handler uses its temporary-context fallback.
     bool postClearWindowSurfaceTask();
 
     // Restore the previous tab when a hidden tab is opened
@@ -255,8 +260,9 @@ private:
     bool browserEnabled() const;
 
     void destroyWindow();
-    static void clearWindowSurfaceTask(void* data);
     void clearWindowSurface();
+    bool ensureRenderContext();
+    bool ensureTextureProgram();
 
     QPointer<QMozWindow> m_mozWindow;
     QPointer<QQuickItem> m_rotationHandler;
@@ -264,6 +270,8 @@ private:
     QPointer<QQuickView> m_chromeWindow;
     QOpenGLContext *m_context = nullptr;
     QMutex m_contextMutex;
+    QOpenGLShaderProgram *m_textureProgram = nullptr;
+    GLuint m_frameTexture = 0;
 
     QPointer<DeclarativeTabModel> m_model;
     QPointer<QQmlComponent> m_webPageComponent;
@@ -291,9 +299,10 @@ private:
 
     bool m_privateMode = false;
     bool m_activeTabRendered = false;
-
-    QMutex m_clearSurfaceTaskMutex;
-    QMozContext::TaskHandle m_clearSurfaceTask = nullptr;
+    bool m_waitingForActiveTabFrame = false;
+    bool m_waitingForActiveTabLoad = false;
+    bool m_waitingForActiveTabFirstPaint = false;
+    int m_activeTabCompositesToSkip = 0;
 
     bool m_closing = false;
 

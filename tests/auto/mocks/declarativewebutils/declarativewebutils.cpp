@@ -50,11 +50,9 @@ void DeclarativeWebUtils::updateWebEngineSettings()
 
     // Add only mandatory preferences for unit tests.
 
-    // Use external Qt window for rendering content
+    // Use the EmbedLite offscreen surface handoff for rendering content.
     webEngineSettings->setPreference(QString("gfx.compositor.external-window"), QVariant(true));
     webEngineSettings->setPreference(QString("gfx.compositor.clear-context"), QVariant(false));
-    webEngineSettings->setPreference(QString("embedlite.compositor.external_gl_context"), QVariant(true));
-    webEngineSettings->setPreference(QString("embedlite.compositor.request_external_gl_context_early"), QVariant(true));
 }
 
 DeclarativeWebUtils *DeclarativeWebUtils::instance()
@@ -64,4 +62,3 @@ DeclarativeWebUtils *DeclarativeWebUtils::instance()
     }
     return gSingleton;
 }
-

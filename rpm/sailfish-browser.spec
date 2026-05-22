@@ -1,14 +1,14 @@
-%global min_xulrunner_version 45.8.1.1
-%global min_qtmozembed_version 1.53.8
-%global min_embedlite_components_version 1.20.0
-%global min_sailfishwebengine_version 1.5.9
+%global min_xulrunner_version 115.35.0
+%global min_qtmozembed_version 1.53.9
+%global min_embedlite_components_version 1.23.0
+%global min_sailfishwebengine_version 1.6.0
 
 %global captiveportal sailfish-captiveportal
 
 Name:       sailfish-browser
 
 Summary:    Sailfish Browser
-Version:    2.3.30
+Version:    3.0.0
 Release:    1
 License:    MPLv2.0
 Url:        https://github.com/sailfishos/sailfish-browser

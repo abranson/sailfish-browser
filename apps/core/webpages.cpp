@@ -201,17 +201,12 @@ int WebPages::previouslyUsedTabId() const
 void WebPages::updateStates(DeclarativeWebPage *oldActivePage, DeclarativeWebPage *newActivePage)
 {
     if (oldActivePage) {
-        // Allow suspending only the current active page if it is not the creator (parent).
-        if (newActivePage->parentId() != (int)oldActivePage->uniqueId()) {
-            if (oldActivePage->loading()) {
-                oldActivePage->stop();
-            }
-            oldActivePage->suspendView();
-        } else {
-            // Sets parent to inactive and suspends rendering keeping
-            // timeouts running.
-            oldActivePage->setActive(false);
+        const bool newActivePageCreatedByOld = newActivePage
+                && newActivePage->parentId() == static_cast<int>(oldActivePage->uniqueId());
+        if (oldActivePage->loading() && !newActivePageCreatedByOld) {
+            oldActivePage->stop();
         }
+        oldActivePage->suspendView();
     }
 
     if (newActivePage) {

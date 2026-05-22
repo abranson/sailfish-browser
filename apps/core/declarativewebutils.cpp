@@ -12,6 +12,7 @@
 
 // QtCore
 #include <QtCore/QDateTime>
+#include <QtCore/QDebug>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
@@ -38,7 +39,7 @@
 #include "declarativewebutils.h"
 #include "browserpaths.h"
 
-static const auto defaultUserAgentUpdateUrl = QStringLiteral("https://browser.sailfishos.org/gecko/91.0/ua-update.json");
+static const auto defaultUserAgentUpdateUrl = QStringLiteral("https://browser.sailfishos.org/gecko/115.0/ua-update.json");
 
 static DeclarativeWebUtils *gSingleton = 0;
 
@@ -124,12 +125,6 @@ void DeclarativeWebUtils::updateWebEngineSettings()
     webEngineSettings->setPreference(QString("geo.wifi.scan"), QVariant(false));
     webEngineSettings->setPreference(QString("media.resource_handler_disabled"), QVariant(true));
 
-    // Ensure the renderer is configured correctly
-    webEngineSettings->setPreference(QStringLiteral("embedlite.compositor.external_gl_context"),
-                                     QVariant(true));
-    webEngineSettings->setPreference(QStringLiteral("embedlite.compositor.request_external_gl_context_early"),
-                                     QVariant(true));
-
     // subscribe to gecko messages
     std::vector<std::string> messages = { "clipboard:setdata",
                                           "media-decoder-info",
@@ -140,6 +135,10 @@ void DeclarativeWebUtils::updateWebEngineSettings()
 
     // Enable internet search
     webEngineSettings->setPreference(QString("keyword.enabled"), QVariant(true));
+
+    // Remove this override after rebasing the bundled Gecko to esr140 or
+    // newer, where HTTPS-First is the default for normal browsing.
+    webEngineSettings->setPreference(QStringLiteral("dom.security.https_first"), QVariant(true));
 
     setRenderingPreferences();
 }
@@ -237,8 +236,7 @@ void DeclarativeWebUtils::setRenderingPreferences()
 {
     SailfishOS::WebEngineSettings *webEngineSettings = SailfishOS::WebEngineSettings::instance();
 
-    // Use external Qt window for rendering content
+    // The content window consumes EmbedLite's offscreen WebRender surface.
     webEngineSettings->setPreference(QString("gfx.compositor.external-window"), QVariant(true));
     webEngineSettings->setPreference(QString("gfx.compositor.clear-context"), QVariant(false));
-    webEngineSettings->setPreference(QString("embedlite.compositor.external_gl_context"), QVariant(true));
 }
