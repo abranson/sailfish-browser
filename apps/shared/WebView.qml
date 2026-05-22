@@ -216,6 +216,66 @@ WebContainer {
         contentItem.sendAsyncMessage(name, data)
     }
 
+    property Component clipboardPasteDialogComponent: Component {
+        Dialog {
+            id: pasteDialog
+
+            property string origin
+            property int delay
+            property bool delayElapsed: delay <= 0
+
+            canAccept: delayElapsed
+
+            function clipboardPasteReadText(origin) {
+                //% "Allow %1 to read text from the clipboard?"
+                return qsTrId("sailfish_browser-la-allow_clipboard_read").arg(origin)
+            }
+
+            function clipboardPasteReadUnknownText() {
+                //% "Allow this page to read text from the clipboard?"
+                return qsTrId("sailfish_browser-la-allow_clipboard_read_unknown")
+            }
+
+            Popups.UserPromptInterface {
+                id: clipboardPastePrompt
+
+                anchors.fill: parent
+
+                //% "Allow"
+                acceptText: qsTrId("sailfish_browser-he-allow_clipboard_read")
+                //% "Deny"
+                cancelText: qsTrId("sailfish_browser-he-deny_clipboard_read")
+
+                Popups.UserPromptUi {
+                    anchors.fill: parent
+                    dialog: pasteDialog
+                    popupInterface: clipboardPastePrompt
+
+                    Column {
+                        width: parent.width
+                        spacing: Theme.paddingMedium
+
+                        Label {
+                            x: Theme.horizontalPageMargin
+                            width: parent.width - 2 * x
+                            text: pasteDialog.origin.length > 0
+                                  ? pasteDialog.clipboardPasteReadText(pasteDialog.origin)
+                                  : pasteDialog.clipboardPasteReadUnknownText()
+                            wrapMode: Text.WordWrap
+                            color: Theme.highlightColor
+                        }
+                    }
+                }
+            }
+
+            Timer {
+                interval: Math.max(0, pasteDialog.delay)
+                running: pasteDialog.delay > 0
+                onTriggered: pasteDialog.delayElapsed = true
+            }
+        }
+    }
+
     function thumbnailCaptureSize() {
         if (webView.activePortalMode) {
             console.log("Thumbnail size tried accessed in captive portal mode")
@@ -286,6 +346,7 @@ WebContainer {
             property bool userHasDraggedWhileLoading
             property string favicon
             property string metadataTitle
+            property var pendingClipboardPasteData
 
             property QtObject pickerOpener: Pickers.PickerOpener {
                 pageStack: window.pageStack
@@ -361,6 +422,53 @@ WebContainer {
                     browserPage.inputRegion.selectionStartHandleMask = Qt.rect(0, 0, 0, 0)
                     browserPage.inputRegion.selectionEndHandleMask = Qt.rect(0, 0, 0, 0)
                 }
+            }
+
+            function sendClipboardPasteResponse(data, accepted) {
+                var response = {
+                    "id": data.id,
+                    "accepted": accepted
+                }
+                if (data.winId) {
+                    response.winId = data.winId
+                }
+                webPage.sendAsyncMessage("embedui:clipboardreadpasteresponse", response)
+            }
+
+            function openPendingClipboardPasteDialog() {
+                if (window.pageStack.busy || !pendingClipboardPasteData) {
+                    return
+                }
+
+                window.pageStack.busyChanged.disconnect(openPendingClipboardPasteDialog)
+                var data = pendingClipboardPasteData
+                pendingClipboardPasteData = null
+                openClipboardPasteDialog(data)
+            }
+
+            function openClipboardPasteDialog(data) {
+                if (window.pageStack.busy) {
+                    if (pendingClipboardPasteData) {
+                        sendClipboardPasteResponse(pendingClipboardPasteData, false)
+                    } else {
+                        window.pageStack.busyChanged.connect(openPendingClipboardPasteDialog)
+                    }
+                    pendingClipboardPasteData = data
+                    return
+                }
+
+                var page = window.pageStack.animatorPush(clipboardPasteDialogComponent, {
+                    "origin": data.origin || "",
+                    "delay": Math.max(0, data.delay || 0)
+                })
+                page.pageCompleted.connect(function(dialog) {
+                    dialog.accepted.connect(function() {
+                        sendClipboardPasteResponse(data, true)
+                    })
+                    dialog.rejected.connect(function() {
+                        sendClipboardPasteResponse(data, false)
+                    })
+                })
             }
 
             fixedToolbar: fixedToolbarConfig.value
@@ -493,6 +601,10 @@ WebContainer {
                 }
 
                 switch (message) {
+                case "embed:clipboardreadpaste": {
+                    openClipboardPasteDialog(data)
+                    break
+                }
                 case "Link:SetIcon": {
                     if (acceptedTouchIcon)
                         return
@@ -587,6 +699,7 @@ WebContainer {
                 addMessageListener("Content:SelectionRange")
                 addMessageListener("Content:SelectionCopied")
                 addMessageListener("Content:SelectionSwap")
+                addMessageListener("embed:clipboardreadpaste")
 
                 PermissionManager.instance()
             }

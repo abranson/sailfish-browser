@@ -126,7 +126,8 @@ void DeclarativeWebUtils::updateWebEngineSettings()
     webEngineSettings->setPreference(QString("media.resource_handler_disabled"), QVariant(true));
 
     // subscribe to gecko messages
-    std::vector<std::string> messages = { "clipboard:setdata",
+    std::vector<std::string> messages = { "clipboard:getdata",
+                                          "clipboard:setdata",
                                           "media-decoder-info",
                                           "embed:download",
                                           "embed:allprefs",
@@ -222,7 +223,11 @@ QString DeclarativeWebUtils::pageName(const QString &fullUrl) const
 void DeclarativeWebUtils::handleObserve(const QString &message, const QVariant &data)
 {
     const QVariantMap dataMap = data.toMap();
-    if (message == "clipboard:setdata") {
+    if (message == "clipboard:getdata") {
+        QClipboard *clipboard = QGuiApplication::clipboard();
+        SailfishOS::WebEngine::instance()->notifyObservers(
+                    QStringLiteral("embedui:clipboard"), clipboard->text());
+    } else if (message == "clipboard:setdata") {
         QClipboard *clipboard = QGuiApplication::clipboard();
 
         // check if we copied password
