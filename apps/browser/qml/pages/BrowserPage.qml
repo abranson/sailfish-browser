@@ -40,7 +40,20 @@ Page {
     property alias webView: webView
     property alias inputRegion: inputRegion
 
+    function loadInternalPage(url) {
+        if (url == "about:config" || url == "about:settings") {
+            overlay.loadPage(url)
+            return true
+        }
+
+        return false
+    }
+
     function load(url, title) {
+        if (loadInternalPage(url)) {
+            return
+        }
+
         webView.load(url, title)
     }
 
@@ -61,7 +74,6 @@ Page {
         window.activate()
     }
 
-    // for time being make this fullscreen. TODO: avoid drawing over cutout and corner areas.
     cutoutMode: CutoutMode.FullScreen
     background: null
     onStatusChanged: {
@@ -409,6 +421,12 @@ Page {
 
             if (browserPage.status !== PageStatus.Active) {
                 pageStack.pop(browserPage, PageStackAction.Immediate)
+            }
+
+            if (loadInternalPage(url)) {
+                bringToForeground(webView.chromeWindow)
+                window.activate()
+                return
             }
 
             webView.grabActivePage()

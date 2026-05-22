@@ -29,6 +29,17 @@ Page {
         return uri.replace(/(^\w+:|^)\/\//, '')
     }
 
+    function cutoutGuardIndex(policy) {
+        switch (policy) {
+        case "compat":
+            return 1
+        case "strict":
+            return 2
+        default:
+            return 0
+        }
+    }
+
     SilicaFlickable {
         anchors.fill: parent
         contentHeight: contentColumn.height
@@ -285,8 +296,7 @@ Page {
                 iconSource: "image://theme/icon-m-downloads"
                 value: {
                     if (WebEngineSettings.useDownloadDir) {
-                        //% "Download to %1"
-                        return qsTrId("sailfish_browser-me-download_to").arg(WebEngineSettings.downloadDir.split("/").pop())
+                        return WebEngineSettings.downloadDir.split("/").pop()
                     } else {
                         //% "Always ask"
                         return qsTrId("sailfish_browser-me-always_ask")
@@ -362,6 +372,39 @@ Page {
                 }
             }
 
+            BrowserComboBox {
+                visible: Screen.topCutout.height > 0
+
+                //% "Notch guard"
+                label: qsTrId("settings_browser-la-notch_guard")
+                iconSource: "image://theme/icon-m-display"
+                currentIndex: cutoutGuardIndex(cutoutGuardConfig.value)
+
+                //% "Keeps website content away from the screen notch. Automatic lets adapted websites use the notch area while keeping content clear."
+                description: qsTrId("sailfish_browser-me-notch_guard_description")
+
+                menu: ContextMenu {
+                    MenuItem {
+                        //: Notch guard mode that allows adapted websites to use the notch area
+                        //% "Automatic"
+                        text: qsTrId("sailfish_browser-me-notch_guard_automatic")
+                        onClicked: cutoutGuardConfig.value = "top_guard"
+                    }
+                    MenuItem {
+                        //: Notch guard mode that always keeps website content away from the notch
+                        //% "Forced"
+                        text: qsTrId("sailfish_browser-me-notch_guard_forced")
+                        onClicked: cutoutGuardConfig.value = "compat"
+                    }
+                    MenuItem {
+                        //: Notch guard mode that allows websites to use the notch area when requested
+                        //% "Disabled"
+                        text: qsTrId("sailfish_browser-me-notch_guard_disabled")
+                        onClicked: cutoutGuardConfig.value = "strict"
+                    }
+                }
+            }
+
             TextSwitch {
                 //: Setting for fixed or dynamically shown/hidden toolbar
                 //% "Fixed toolbar"
@@ -404,6 +447,13 @@ Page {
 
         key: "/apps/sailfish-browser/settings/fixed_toolbar"
         defaultValue: false
+    }
+
+    ConfigurationValue {
+        id: cutoutGuardConfig
+
+        key: "/apps/sailfish-browser/settings/cutout_guard"
+        defaultValue: "top_guard"
     }
 
     ConfigurationValue {

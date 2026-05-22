@@ -53,6 +53,9 @@ Shared.Background {
 
     function loadPage(url, newTab) {
         if (url == "about:config") {
+            if (webView) {
+                webView.clearSurface()
+            }
             pageStack.animatorPush(Qt.resolvedUrl("ConfigWarning.qml"), {"browserPage": browserPage})
         } else if (url == "about:settings") {
             pageStack.animatorPush(Qt.resolvedUrl("../SettingsPage.qml"))

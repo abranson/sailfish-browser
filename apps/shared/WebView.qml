@@ -33,8 +33,127 @@ WebContainer {
     property bool imOpened
     property real toolbarHeight
     property string favicon: contentItem ? contentItem.favicon : ""
+    readonly property color _defaultThemeColor: WebEngineSettings.colorScheme === WebEngineSettings.PrefersLightMode
+            || (WebEngineSettings.colorScheme === WebEngineSettings.FollowsAmbience
+                && Theme.colorScheme !== Theme.LightOnDark) ? "white" : "black"
+    readonly property color themeColor: contentItem && contentItem.hasThemeColor
+            ? contentItem.themeColor : _defaultThemeColor
     property bool findInPageHasResult
     property bool canShowSelectionMarkers: true
+    readonly property int _topCutoutInset: Math.max(0, Screen.topCutout.y + Screen.topCutout.height)
+    readonly property int _safeAreaInsetTop: 1
+    readonly property int _safeAreaInsetRight: 2
+    readonly property int _safeAreaInsetBottom: 4
+    readonly property int _safeAreaInsetLeft: 8
+    readonly property int _pageOrientation: rotationHandler ? rotationHandler.orientation : Orientation.Portrait
+    readonly property int _screenOrientation: _qtScreenOrientation(_pageOrientation)
+    readonly property int _contentOrientation: _validCutoutOrientation(pendingWebContentOrientation)
+            ? pendingWebContentOrientation : _screenOrientation
+    readonly property int _contentCutoutTop: _cutoutTop(_contentOrientation)
+    readonly property int _contentCutoutRight: _cutoutRight(_contentOrientation)
+    readonly property int _contentCutoutBottom: _cutoutBottom(_contentOrientation)
+    readonly property int _contentCutoutLeft: _cutoutLeft(_contentOrientation)
+    readonly property int _contentCutoutInsetUsage: _safeAreaInsetUsage(
+            _contentCutoutTop, _contentCutoutRight, _contentCutoutBottom, _contentCutoutLeft)
+    readonly property int _hostBaseCutoutTop: _cutoutTop(_screenOrientation)
+    readonly property int _hostBaseCutoutRight: _cutoutRight(_screenOrientation)
+    readonly property int _hostBaseCutoutBottom: _cutoutBottom(_screenOrientation)
+    readonly property int _hostBaseCutoutLeft: _cutoutLeft(_screenOrientation)
+    readonly property bool _hostBaseCutoutVertical: _hostBaseCutoutTop > 0 || _hostBaseCutoutBottom > 0
+    readonly property bool _hostBaseCutoutHorizontal: _hostBaseCutoutLeft > 0 || _hostBaseCutoutRight > 0
+    readonly property int _hostCutoutTop: width <= height && _hostBaseCutoutHorizontal
+            ? _topCutoutInset : (width > height && _hostBaseCutoutVertical ? 0 : _hostBaseCutoutTop)
+    readonly property int _hostCutoutRight: width <= height && _hostBaseCutoutHorizontal
+            ? 0 : (width > height && _hostBaseCutoutVertical ? 0 : _hostBaseCutoutRight)
+    readonly property int _hostCutoutBottom: width <= height && _hostBaseCutoutHorizontal
+            ? 0 : (width > height && _hostBaseCutoutVertical ? 0 : _hostBaseCutoutBottom)
+    readonly property int _hostCutoutLeft: width > height && _hostBaseCutoutVertical
+            ? _topCutoutInset : (width <= height && _hostBaseCutoutHorizontal ? 0 : _hostBaseCutoutLeft)
+    readonly property bool coverViewportFit: contentItem && contentItem.viewportFit === "cover"
+    readonly property string _viewportFitCoverPolicy: _normalizedCutoutGuard(cutoutGuardConfig.value)
+    readonly property bool _safeAreaUsedForContentCutout: contentItem
+            && _contentCutoutInsetUsage !== 0
+            && (contentItem.safeAreaInsetUsage & _contentCutoutInsetUsage) === _contentCutoutInsetUsage
+    readonly property bool _policyAllowsCoverViewportFit: coverViewportFit
+            && (_viewportFitCoverPolicy === "strict"
+                || (_viewportFitCoverPolicy === "top_guard" && _safeAreaUsedForContentCutout))
+    readonly property bool displayCutoutAllowed: contentFullscreen || _policyAllowsCoverViewportFit
+    webContentRect: displayCutoutAllowed
+                    ? Qt.rect(0, 0, width, height)
+                    : Qt.rect(_hostCutoutLeft,
+                              _hostCutoutTop,
+                              Math.max(0, width - _hostCutoutLeft - _hostCutoutRight),
+                              Math.max(0, height - _hostCutoutTop - _hostCutoutBottom))
+    webContentBackgroundColor: displayCutoutAllowed ? _defaultThemeColor : themeColor
+
+    function _qtScreenOrientation(pageOrientation) {
+        switch (pageOrientation) {
+        case Orientation.Landscape:
+            return Qt.LandscapeOrientation
+        case Orientation.PortraitInverted:
+            return Qt.InvertedPortraitOrientation
+        case Orientation.LandscapeInverted:
+            return Qt.InvertedLandscapeOrientation
+        default:
+            return Qt.PortraitOrientation
+        }
+    }
+
+    function _validCutoutOrientation(orientation) {
+        switch (orientation) {
+        case Qt.PortraitOrientation:
+        case Qt.InvertedLandscapeOrientation:
+        case Qt.InvertedPortraitOrientation:
+        case Qt.LandscapeOrientation:
+            return true
+        default:
+            return false
+        }
+    }
+
+    function _cutoutTop(orientation) {
+        return orientation === Qt.PortraitOrientation ? _topCutoutInset : 0
+    }
+
+    function _cutoutRight(orientation) {
+        return orientation === Qt.InvertedLandscapeOrientation ? _topCutoutInset : 0
+    }
+
+    function _cutoutBottom(orientation) {
+        return orientation === Qt.InvertedPortraitOrientation ? _topCutoutInset : 0
+    }
+
+    function _cutoutLeft(orientation) {
+        return orientation === Qt.LandscapeOrientation ? _topCutoutInset : 0
+    }
+
+    function _safeAreaInsetUsage(top, right, bottom, left) {
+        var usage = 0
+        if (top > 0) {
+            usage |= _safeAreaInsetTop
+        }
+        if (right > 0) {
+            usage |= _safeAreaInsetRight
+        }
+        if (bottom > 0) {
+            usage |= _safeAreaInsetBottom
+        }
+        if (left > 0) {
+            usage |= _safeAreaInsetLeft
+        }
+        return usage
+    }
+
+    function _normalizedCutoutGuard(policy) {
+        switch (policy) {
+        case "strict":
+        case "compat":
+        case "top_guard":
+            return policy
+        default:
+            return "top_guard"
+        }
+    }
 
     property var resourceController: ResourceController {
         webPage: contentItem
@@ -70,6 +189,11 @@ WebContainer {
     property ConfigurationValue fixedToolbarConfig: ConfigurationValue {
         key: "/apps/sailfish-browser/settings/fixed_toolbar"
         defaultValue: false
+    }
+
+    property ConfigurationValue cutoutGuardConfig: ConfigurationValue {
+        key: "/apps/sailfish-browser/settings/cutout_guard"
+        defaultValue: "top_guard"
     }
 
     function stop() {
@@ -222,6 +346,10 @@ WebContainer {
 
             fixedToolbar: fixedToolbarConfig.value
             toolbarHeight: container.toolbarHeight
+            safeAreaTop: webView.displayCutoutAllowed ? webView._contentCutoutTop : 0
+            safeAreaRight: webView.displayCutoutAllowed ? webView._contentCutoutRight : 0
+            safeAreaBottom: webView.displayCutoutAllowed ? webView._contentCutoutBottom : 0
+            safeAreaLeft: webView.displayCutoutAllowed ? webView._contentCutoutLeft : 0
             throttlePainting: !foreground && !resourceController.videoActive && webView.visible || !webView.visible
             enabled: webView.enabled
             chromeGestureThreshold: toolbarHeight / 3
@@ -247,8 +375,12 @@ WebContainer {
             }
 
             onUrlChanged: {
-                if (url == "about:blank")
+                if (url == "about:blank") {
+                    rendered = false
+                    frameCounter = 0
+                    webView.clearSurface()
                     return
+                }
 
                 webView.findInPageHasResult = false
                 var modelUrl = tabModel.url(tabId)

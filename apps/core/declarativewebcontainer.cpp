@@ -54,6 +54,20 @@ static const auto ABOUT_BLANK = QStringLiteral("about:blank");
 
 static DeclarativeWebContainer *s_instance = nullptr;
 
+static QColor opaqueSurfaceColor(const QColor &color)
+{
+    QColor normalized = color.isValid() ? color : QColor(Qt::black);
+    normalized.setAlpha(255);
+    return normalized;
+}
+
+static void setGLClearColor(QOpenGLFunctions_ES2 *functions, const QColor &color)
+{
+    const QColor normalized = opaqueSurfaceColor(color);
+    functions->glClearColor(normalized.redF(), normalized.greenF(),
+                            normalized.blueF(), 1.0f);
+}
+
 static void updateTextureCoordinates(Qt::ScreenOrientation orientation, GLfloat *coordinates)
 {
     // WebRender renders into a GL framebuffer, whose EGLImage has a
@@ -468,6 +482,52 @@ void DeclarativeWebContainer::setReadyToPaint(bool ready)
     }
 }
 
+QRectF DeclarativeWebContainer::webContentRect() const
+{
+    return m_webContentRect;
+}
+
+void DeclarativeWebContainer::setWebContentRect(const QRectF &rect)
+{
+    if (m_webContentRect == rect) {
+        return;
+    }
+
+    m_webContentRect = rect;
+    updateMozWindowSize();
+
+    if (isExposed() && m_frameTexture) {
+        renderCompositedFrame();
+    }
+
+    emit webContentRectChanged();
+}
+
+QColor DeclarativeWebContainer::webContentBackgroundColor() const
+{
+    return m_webContentBackgroundColor;
+}
+
+void DeclarativeWebContainer::setWebContentBackgroundColor(const QColor &color)
+{
+    const QColor normalized = opaqueSurfaceColor(color);
+    if (m_webContentBackgroundColor == normalized) {
+        return;
+    }
+
+    m_webContentBackgroundColor = normalized;
+
+    if (isExposed()) {
+        if (m_frameTexture) {
+            renderCompositedFrame();
+        } else if (m_context) {
+            clearWindowSurface();
+        }
+    }
+
+    emit webContentBackgroundColorChanged();
+}
+
 Qt::ScreenOrientation DeclarativeWebContainer::pendingWebContentOrientation() const
 {
     return m_mozWindow ? m_mozWindow->pendingOrientation() : Qt::PortraitOrientation;
@@ -691,19 +751,6 @@ void DeclarativeWebContainer::setActiveTabRendered(bool rendered)
     emit activeTabRenderedChanged();
 }
 
-bool DeclarativeWebContainer::postClearWindowSurfaceTask()
-{
-    // WebRender renders into a Gecko-owned offscreen surface. The old
-    // Qt context used for clearing the external compositor surface can be
-    // created on a different thread than the task runs on, which is fatal with
-    // Qt 5. Do not post that compositor-thread task on the WebRender path.
-    //
-    // Returning false is intentional: exposeEvent() then falls back to a
-    // short-lived UI-thread QOpenGLContext clear, which attaches the first
-    // Wayland buffer so Lipstick can map the browser window.
-    return false;
-}
-
 void DeclarativeWebContainer::clearWindowSurface()
 {
     Q_ASSERT(m_context);
@@ -713,7 +760,7 @@ void DeclarativeWebContainer::clearWindowSurface()
     QOpenGLFunctions_ES2* funcs = m_context->versionFunctions<QOpenGLFunctions_ES2>();
     Q_ASSERT(funcs);
 
-    funcs->glClearColor(1.0, 1.0, 1.0, 0.0);
+    setGLClearColor(funcs, m_webContentBackgroundColor);
     funcs->glClear(GL_COLOR_BUFFER_BIT);
     m_context->swapBuffers(this);
 }
@@ -890,11 +937,6 @@ void DeclarativeWebContainer::exposeEvent(QExposeEvent*)
         if (m_webPage && !m_closing) {
             m_webPage->update();
         } else {
-            if (postClearWindowSurfaceTask()) {
-                alreadyExposed = true;
-                return;
-            }
-
             // The compositor thread has not been created on gecko side, yet.
             // We can use temporary GL context to clear the contents of the
             // surface.
@@ -921,8 +963,8 @@ void DeclarativeWebContainer::exposeEvent(QExposeEvent*)
 
 void DeclarativeWebContainer::resizeEvent(QResizeEvent *event)
 {
-    if (m_mozWindow && !event->size().isEmpty()) {
-        m_mozWindow->setSize(event->size());
+    if (!event->size().isEmpty()) {
+        updateMozWindowSize();
     }
     if (isExposed() && m_frameTexture) {
         renderCompositedFrame();
@@ -940,9 +982,18 @@ void DeclarativeWebContainer::touchEvent(QTouchEvent *event)
     if (m_webPage && m_enabled && (!m_touchBlocked || event->type() != QEvent::TouchBegin)) {
         QList<QTouchEvent::TouchPoint> touchPoints = event->touchPoints();
         QTouchEvent mappedTouchEvent = *event;
+        const QPointF windowOffset(position());
+        const QRectF contentRect = effectiveWebContentRect();
+        const QPointF topLeft = m_rotationHandler->mapFromScene(windowOffset + contentRect.topLeft());
+        const QPointF topRight = m_rotationHandler->mapFromScene(windowOffset + contentRect.topRight());
+        const QPointF bottomLeft = m_rotationHandler->mapFromScene(windowOffset + contentRect.bottomLeft());
+        const QPointF bottomRight = m_rotationHandler->mapFromScene(windowOffset + contentRect.bottomRight());
+        const QPointF contentOrigin(qMin(qMin(topLeft.x(), topRight.x()), qMin(bottomLeft.x(), bottomRight.x())),
+                                    qMin(qMin(topLeft.y(), topRight.y()), qMin(bottomLeft.y(), bottomRight.y())));
 
         for (int i = 0; i < touchPoints.count(); ++i) {
-            QPointF pt = m_rotationHandler->mapFromScene(touchPoints.at(i).pos());
+            QPointF pt = m_rotationHandler->mapFromScene(touchPoints.at(i).pos() + windowOffset);
+            pt -= contentOrigin;
             touchPoints[i].setPos(pt);
         }
 
@@ -1052,7 +1103,28 @@ void DeclarativeWebContainer::updateContentOrientation(Qt::ScreenOrientation ori
 
 void DeclarativeWebContainer::clearSurface()
 {
-    postClearWindowSurfaceTask();
+    if (!isExposed()) {
+        return;
+    }
+
+    QMutexLocker lock(&m_contextMutex);
+    if (m_context) {
+        clearWindowSurface();
+        return;
+    }
+
+    QOpenGLContext context;
+    context.setFormat(requestedFormat());
+    if (!context.create()) {
+        qWarning() << "Failed to create browser surface clear context";
+        return;
+    }
+
+    m_context = &context;
+    clearWindowSurface();
+    m_context = nullptr;
+
+    context.doneCurrent();
 }
 
 qreal DeclarativeWebContainer::contentHeight() const
@@ -1061,6 +1133,33 @@ qreal DeclarativeWebContainer::contentHeight() const
         return m_webPage->contentHeight();
     } else {
         return 0.0;
+    }
+}
+
+QRectF DeclarativeWebContainer::effectiveWebContentRect() const
+{
+    const QRectF windowRect(QPointF(0, 0), QSizeF(width(), height()));
+    QRectF rect = m_webContentRect.isNull() ? windowRect : m_webContentRect;
+
+    rect = rect.intersected(windowRect);
+    if (rect.width() <= 0 || rect.height() <= 0) {
+        return windowRect;
+    }
+
+    return rect;
+}
+
+QSize DeclarativeWebContainer::webContentSize() const
+{
+    const QRectF rect = effectiveWebContentRect();
+    return QSize(qMax(1, qRound(rect.width())),
+                 qMax(1, qRound(rect.height())));
+}
+
+void DeclarativeWebContainer::updateMozWindowSize()
+{
+    if (m_mozWindow) {
+        m_mozWindow->setSize(webContentSize());
     }
 }
 
@@ -1102,15 +1201,13 @@ void DeclarativeWebContainer::initialize()
     }
 
     if (SailfishOS::WebEngine::instance()->isInitialized() && !m_mozWindow) {
-        m_mozWindow = new QMozWindow(QWindow::size());
+        m_mozWindow = new QMozWindow(webContentSize());
         m_mozWindow->setPrimaryOrientation(screen()->primaryOrientation());
 
         connect(m_mozWindow.data(), &QMozWindow::requestGLContext,
                 this, &DeclarativeWebContainer::createGLContext, Qt::DirectConnection);
         connect(m_mozWindow.data(), &QMozWindow::orientationChangeFiltered,
                 this, &DeclarativeWebContainer::handleContentOrientationChanged);
-        connect(m_mozWindow.data(), &QMozWindow::compositorCreated,
-                this, &DeclarativeWebContainer::postClearWindowSurfaceTask);
         connect(m_mozWindow.data(), &QMozWindow::compositingFinished,
                 this, &DeclarativeWebContainer::handleCompositingFinished, Qt::QueuedConnection);
         m_mozWindow->reserve();
@@ -1208,7 +1305,6 @@ void DeclarativeWebContainer::releasePage(int tabId)
         // Successfully destroyed. Emit relevant property changes.
         if (m_model->count() == 0) {
             setWebPage(nullptr, true);
-            postClearWindowSurfaceTask();
         }
     }
 }
@@ -1435,14 +1531,20 @@ void DeclarativeWebContainer::renderCompositedFrame()
     glDisable(GL_STENCIL_TEST);
     glDisable(GL_BLEND);
     glDisable(GL_SCISSOR_TEST);
-    glClearColor(1.0, 1.0, 1.0, 0.0);
+    const QColor clearColor = opaqueSurfaceColor(m_webContentBackgroundColor);
+    glClearColor(clearColor.redF(), clearColor.greenF(), clearColor.blueF(), 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 
-    static const GLfloat vertices[] = {
-        -1.0f,  1.0f,
-        -1.0f, -1.0f,
-         1.0f,  1.0f,
-         1.0f, -1.0f
+    const QRectF contentRect = effectiveWebContentRect();
+    const GLfloat left = 2.0f * contentRect.left() / width() - 1.0f;
+    const GLfloat right = 2.0f * contentRect.right() / width() - 1.0f;
+    const GLfloat top = 1.0f - 2.0f * contentRect.top() / height();
+    const GLfloat bottom = 1.0f - 2.0f * contentRect.bottom() / height();
+    const GLfloat vertices[] = {
+        left, top,
+        left, bottom,
+        right, top,
+        right, bottom
     };
     GLfloat texCoords[8];
     updateTextureCoordinates(m_mozWindow->contentOrientation(), texCoords);
@@ -1485,6 +1587,7 @@ void DeclarativeWebContainer::handleContentOrientationChanged(Qt::ScreenOrientat
 {
     if (orientation == pendingWebContentOrientation()) {
         emit webContentOrientationChanged(orientation);
+        renderCompositedFrame();
     }
 }
 

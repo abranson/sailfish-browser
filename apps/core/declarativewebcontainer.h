@@ -15,11 +15,13 @@
 #include <QtGui/QWindow>
 #include <QtGui/QOpenGLFunctions>
 #include <QtGui/qopengl.h>
+#include <QColor>
 #include <QPointer>
 #include <QQmlComponent>
 #include <QQuickView>
 #include <QQuickItem>
 #include <QMutex>
+#include <QRectF>
 #include <QTimer>
 
 class QMozWindow;
@@ -66,6 +68,8 @@ class DeclarativeWebContainer : public QWindow, public QQmlParserStatus, protect
     Q_PROPERTY(QQmlComponent* webPageComponent READ webPageComponent WRITE setWebPageComponent NOTIFY webPageComponentChanged FINAL)
     Q_PROPERTY(QObject *chromeWindow READ chromeWindow WRITE setChromeWindow NOTIFY chromeWindowChanged FINAL)
     Q_PROPERTY(bool readyToPaint READ readyToPaint WRITE setReadyToPaint NOTIFY readyToPaintChanged FINAL)
+    Q_PROPERTY(QRectF webContentRect READ webContentRect WRITE setWebContentRect NOTIFY webContentRectChanged FINAL)
+    Q_PROPERTY(QColor webContentBackgroundColor READ webContentBackgroundColor WRITE setWebContentBackgroundColor NOTIFY webContentBackgroundColorChanged FINAL)
 
     Q_PROPERTY(Qt::ScreenOrientation pendingWebContentOrientation READ pendingWebContentOrientation NOTIFY pendingWebContentOrientationChanged FINAL)
 
@@ -116,6 +120,11 @@ public:
 
     bool readyToPaint() const;
     void setReadyToPaint(bool ready);
+
+    QRectF webContentRect() const;
+    void setWebContentRect(const QRectF &rect);
+    QColor webContentBackgroundColor() const;
+    void setWebContentBackgroundColor(const QColor &color);
 
     Qt::ScreenOrientation pendingWebContentOrientation() const;
 
@@ -183,6 +192,8 @@ signals:
     void chromeWindowChanged();
     void chromeExposed();
     void readyToPaintChanged();
+    void webContentRectChanged();
+    void webContentBackgroundColorChanged();
 
     void pendingWebContentOrientationChanged();
     void webContentOrientationChanged(Qt::ScreenOrientation orientation);
@@ -240,10 +251,6 @@ private slots:
     void renderCompositedFrame();
 
     void handleContentOrientationChanged(Qt::ScreenOrientation orientation);
-    // Attaches the first Wayland buffer for the WebRender browser window.
-    // The WebRender path does this on the UI thread and returns false so the
-    // expose handler uses its temporary-context fallback.
-    bool postClearWindowSurfaceTask();
 
     // Restore the previous tab when a hidden tab is opened
     void restorePreviousTab();
@@ -253,6 +260,9 @@ private:
     void setWebPage(DeclarativeWebPage *webPage, bool triggerSignals = false);
     void setTabModel(DeclarativeTabModel *model);
     qreal contentHeight() const;
+    QRectF effectiveWebContentRect() const;
+    QSize webContentSize() const;
+    void updateMozWindowSize();
     bool canInitialize() const;
     void loadTab(const Tab& tab, bool force, bool fromExternal);
     void updateMode();
@@ -282,6 +292,8 @@ private:
     bool m_enabled = true;
     bool m_foreground = true;
     bool m_touchBlocked = false;
+    QRectF m_webContentRect;
+    QColor m_webContentBackgroundColor = QColor(Qt::black);
 
     // See DeclarativeWebContainer::load (line 283) as load need to "work" even if engine, model,
     // or qml component is not yet completed (completed property is still false). So cache url/title for later use.
