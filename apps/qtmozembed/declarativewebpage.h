@@ -128,6 +128,7 @@ private:
     void setViewportFit(const QString &viewportFit);
     void setSafeAreaInsetUsage(int usage);
     void setThemeColor(const QColor &color);
+    void updateMetadataTitle(const QString &title);
 
     QPointer<DeclarativeWebContainer> m_container;
     // Tab data fetched upon web page initialization. It never changes afterwards.

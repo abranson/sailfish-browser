@@ -14,6 +14,7 @@
 
 #include <webengine.h>
 
+#include <QBuffer>
 #include <QImage>
 #include <QUrl>
 #include <QDir>
@@ -34,9 +35,8 @@ void DataFetcher::fetch(const QString &url)
         updateAcceptedTouchIcon(false);
 
     m_url = url;
-    QString path = m_url.path();
     updateStatus(Fetching);
-    if (m_type == Icon && (path.endsWith(".ico") || url.isEmpty())) {
+    if (m_type == Icon && url.isEmpty()) {
         m_data = defaultIcon();
         updateStatus(Ready);
         emit dataChanged();
@@ -109,9 +109,15 @@ void DataFetcher::saveAsImage()
         if (image.width() < m_minimumIconSize || image.height() < m_minimumIconSize) {
             m_data = defaultIcon();
         } else {
-            // TODO: use the actual image type
-            m_data = QStringLiteral("data:image/png;base64,")
-                    + QString::fromLatin1(m_networkData.toBase64());
+            QByteArray imageData;
+            QBuffer buffer(&imageData);
+            buffer.open(QIODevice::WriteOnly);
+            if (image.save(&buffer, "PNG")) {
+                m_data = QStringLiteral("data:image/png;base64,")
+                        + QString::fromLatin1(imageData.toBase64());
+            } else {
+                m_data = defaultIcon();
+            }
         }
     }
     updateAcceptedTouchIcon(true);

@@ -285,6 +285,7 @@ WebContainer {
             readonly property bool activeWebPage: container.tabId == tabId
             property bool userHasDraggedWhileLoading
             property string favicon
+            property string metadataTitle
 
             property QtObject pickerOpener: Pickers.PickerOpener {
                 pageStack: window.pageStack
@@ -317,6 +318,24 @@ WebContainer {
                 onLoginSaved: {
                     if (!webView.activePortalMode) {
                         FaviconManager.grabIcon("logins", webPage,
+                                                Qt.size(Theme.iconSizeMedium,
+                                                        Theme.iconSizeMedium))
+                    }
+                }
+            }
+
+            function effectiveTitle() {
+                return metadataTitle || title || String(url)
+            }
+
+            function updateHistoryIcon(force) {
+                if (loaded && !webView.activePortalMode && !webView.privateMode) {
+                    if (force) {
+                        FaviconManager.refreshIcon("history", webPage,
+                                                   Qt.size(Theme.iconSizeMedium,
+                                                           Theme.iconSizeMedium))
+                    } else {
+                        FaviconManager.grabIcon("history", webPage,
                                                 Qt.size(Theme.iconSizeMedium,
                                                         Theme.iconSizeMedium))
                     }
@@ -359,6 +378,12 @@ WebContainer {
 
             // Image data is base64 encoded which can be directly used as source in Image element
             onThumbnailResult: tabModel.updateThumbnailPath(tabId, data)
+
+            onTitleChanged: {
+                if (title) {
+                    metadataTitle = title
+                }
+            }
 
             onAtYBeginningChanged: {
                 if (atYBeginning && activeWebPage && domContentLoaded) {
@@ -428,9 +453,7 @@ WebContainer {
 
                         if (!webView.privateMode) {
                             // Update the favicon for history items.
-                            FaviconManager.grabIcon("history", webPage,
-                                                    Qt.size(Theme.iconSizeMedium,
-                                                            Theme.iconSizeMedium))
+                            updateHistoryIcon(false)
                         }
                     }
                 }
@@ -447,6 +470,7 @@ WebContainer {
                     userHasDraggedWhileLoading = false
                     webPage.chrome = true
                     favicon = ""
+                    metadataTitle = ""
                     acceptedTouchIcon = false
                 }
             }
@@ -473,8 +497,32 @@ WebContainer {
                     if (acceptedTouchIcon)
                         return
 
-                    acceptedTouchIcon = data.isRichIcon
+                    var previousFavicon = favicon
+                    acceptedTouchIcon = !!data.isRichIcon
                     favicon = data.url
+                    if (favicon && favicon !== previousFavicon) {
+                        updateHistoryIcon(true)
+                    }
+                    break
+                }
+                case "embed:pageMetadata": {
+                    if (data.url && data.url !== String(url)) {
+                        break
+                    }
+
+                    if (data.title) {
+                        metadataTitle = data.title
+                    }
+
+                    var richIcon = !!data.isRichIcon
+                    if (data.favicon && (richIcon || !acceptedTouchIcon)) {
+                        var oldFavicon = favicon
+                        acceptedTouchIcon = richIcon
+                        favicon = data.favicon
+                        if (favicon !== oldFavicon) {
+                            updateHistoryIcon(true)
+                        }
+                    }
                     break
                 }
                 case "Content:SelectionRange": {

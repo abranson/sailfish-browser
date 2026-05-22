@@ -36,10 +36,18 @@ SettingManager::SettingManager(QObject *parent)
     connect(m_toolbarSmall, &MDConfItem::valueChanged, this, &SettingManager::toolbarSmallChanged);
     connect(m_toolbarLarge, &MDConfItem::valueChanged, this, &SettingManager::toolbarLargeChanged);
 
-    SailfishOS::WebEngine::instance()->addObserver(QStringLiteral("cache-size"));
-    SailfishOS::WebEngine::instance()->addObserver(QStringLiteral("site-data-size"));
-    connect(SailfishOS::WebEngine::instance(), &SailfishOS::WebEngine::recvObserve,
+    SailfishOS::WebEngine *webEngine = SailfishOS::WebEngine::instance();
+    webEngine->addObserver(QStringLiteral("cache-size"));
+    webEngine->addObserver(QStringLiteral("site-data-size"));
+    webEngine->addObserver(QStringLiteral("embed:search"));
+    connect(webEngine, &SailfishOS::WebEngine::initialized,
+            this, &SettingManager::requestSearchEngines);
+    connect(webEngine, &SailfishOS::WebEngine::recvObserve,
             this, &SettingManager::handleObserve);
+
+    if (webEngine->isInitialized()) {
+        requestSearchEngines();
+    }
 }
 
 int SettingManager::toolbarSmall()
@@ -127,6 +135,13 @@ void SettingManager::setSearchEngine()
     }
 }
 
+void SettingManager::requestSearchEngines()
+{
+    QVariantMap message;
+    message.insert(QLatin1String("msg"), QLatin1String("init"));
+    SailfishOS::WebEngine::instance()->notifyObservers(QLatin1String("embedui:search"), QVariant(message));
+}
+
 void SettingManager::handleObserve(const QString &message, const QVariant &data)
 {
     const QVariantMap dataMap = data.toMap();
@@ -173,22 +188,27 @@ void SettingManager::handleObserve(const QString &message, const QVariant &data)
             // engine immediately.
             setSearchEngine();
         } else if (msg == QLatin1String("search-engine-added")) {
-            // We're only interrested about the very first start. Then the m_addedSearchEngines
-            // contains engines.
             int errorCode = dataMap.value(QLatin1String("errorCode")).toInt();
             bool firstStart = m_addedSearchEngines && !m_addedSearchEngines->isEmpty();
             if (errorCode != 0) {
                 qWarning() << "An error occurred while adding a search engine, error code: " << errorCode
                            << ", see nsIBrowserSearchService for more details.";
-            } else if (m_addedSearchEngines) {
+            } else {
                 QString engine = dataMap.value(QLatin1String("engine")).toString();
-                m_addedSearchEngines->removeAll(engine);
-                m_searchEnginesInitialized = m_addedSearchEngines->isEmpty();
-                // All engines are added.
-                if (firstStart && m_searchEnginesInitialized) {
+                if (m_addedSearchEngines) {
+                    m_addedSearchEngines->removeAll(engine);
+                    m_searchEnginesInitialized = m_addedSearchEngines->isEmpty();
+                    // All engines are added.
+                    if (firstStart && m_searchEnginesInitialized) {
+                        setSearchEngine();
+                        delete m_addedSearchEngines;
+                        m_addedSearchEngines = 0;
+                    }
+                } else if (engine == m_searchEngineConfItem->value(QVariant(QString("Ecosia"))).toString()) {
+                    // User-installed engines are selected before Gecko finishes
+                    // registering them. Apply the selection again once the
+                    // engine is available in nsSearchService.
                     setSearchEngine();
-                    delete m_addedSearchEngines;
-                    m_addedSearchEngines = 0;
                 }
             }
         }

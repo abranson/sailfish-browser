@@ -188,7 +188,17 @@ QString FaviconManager::get(const QString &type, const QString &hostname)
 
 void FaviconManager::grabIcon(const QString &type, DeclarativeWebPage *webPage, const QSize &size)
 {
-    if (!get(type, webPage->url().toString()).isEmpty()) {
+    grabIcon(type, webPage, size, false);
+}
+
+void FaviconManager::refreshIcon(const QString &type, DeclarativeWebPage *webPage, const QSize &size)
+{
+    grabIcon(type, webPage, size, true);
+}
+
+void FaviconManager::grabIcon(const QString &type, DeclarativeWebPage *webPage, const QSize &size, bool force)
+{
+    if (!force && !get(type, webPage->url().toString()).isEmpty()) {
         return; // favicon was previously already loaded.
     }
 

@@ -85,6 +85,12 @@ Item {
                 onClicked: {
                     overlay.animator.showChrome()
                     var page = webView.contentItem
+                    if (!page) {
+                        return
+                    }
+
+                    var pageTitle = page.effectiveTitle ? page.effectiveTitle()
+                                                        : (page.title || String(page.url))
 
                     if (!page.favicon) {
                         var stack = pageStack
@@ -94,7 +100,7 @@ Item {
                         function handleThumbnailResult(data) {
                             stack.animatorPush("AddToAppGridDialog.qml", {
                                 "url": page.url,
-                                "title": page.title,
+                                "title": pageTitle,
                                 "icon": data,
                                 "desktopBookmarkWriter": writer,
                                 "bookmarkWriterParent": stack
@@ -107,8 +113,8 @@ Item {
                         page.grabThumbnail(Qt.size(256, 256))
                     } else {
                         pageStack.animatorPush("AddToAppGridDialog.qml", {
-                            "url": url,
-                            "title": title,
+                            "url": page.url,
+                            "title": pageTitle,
                             "icon": page.favicon,
                             "desktopBookmarkWriter": desktopBookmarkWriter,
                             "bookmarkWriterParent": pageStack

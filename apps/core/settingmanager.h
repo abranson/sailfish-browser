@@ -47,6 +47,7 @@ signals:
     void toolbarLargeChanged();
 
 private slots:
+    void requestSearchEngines();
     void setSearchEngine();
     void handleObserve(const QString &message, const QVariant &data);
 

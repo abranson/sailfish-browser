@@ -23,6 +23,7 @@
 
 #define FULLSCREEN_MESSAGE "embed:fullscreenchanged"
 #define DOM_CONTENT_LOADED_MESSAGE "chrome:contentloaded"
+#define PAGE_METADATA_MESSAGE "embed:pageMetadata"
 #define CONTENT_ORIENTATION_CHANGED_MESSAGE "embed:contentOrientationChanged"
 #define VIEWPORT_FIT_MESSAGE "embed:viewportfit"
 #define LINK_SET_ICON "Link:SetIcon"
@@ -66,6 +67,7 @@ DeclarativeWebPage::DeclarativeWebPage(QObject *parent)
     // subscribe to gecko messages
     std::vector<std::string> messages = { FULLSCREEN_MESSAGE,
                                           DOM_CONTENT_LOADED_MESSAGE,
+                                          PAGE_METADATA_MESSAGE,
                                           LINK_SET_ICON,
                                           LINK_ADD_FEED,
                                           LINK_ADD_SEARCH,
@@ -74,10 +76,12 @@ DeclarativeWebPage::DeclarativeWebPage(QObject *parent)
                                           VIEWPORT_FIT_MESSAGE };
 
     addMessageListeners(messages);
-    loadFrameScript(QStringLiteral("file:///usr/share/%1/shared/ViewportFit.js")
-                    .arg(BrowserAppInfo::captivePortal()
-                         ? QStringLiteral("sailfish-captiveportal")
-                         : QStringLiteral("sailfish-browser")));
+    const QString sharedPath = QStringLiteral("file:///usr/share/%1/shared")
+            .arg(BrowserAppInfo::captivePortal()
+                 ? QStringLiteral("sailfish-captiveportal")
+                 : QStringLiteral("sailfish-browser"));
+    loadFrameScript(sharedPath + QStringLiteral("/ViewportFit.js"));
+    loadFrameScript(sharedPath + QStringLiteral("/PageMetadata.js"));
 
     if (BrowserAppInfo::captivePortal()) {
         addMessageListener(OPEN_LINK);
@@ -409,6 +413,18 @@ void DeclarativeWebPage::loadTab(const QString &newUrl, bool force, bool fromExt
     }
 }
 
+void DeclarativeWebPage::updateMetadataTitle(const QString &title)
+{
+    const QString currentUrl = url().toString();
+    const QString cleanedTitle = title.trimmed();
+    if (privateMode() || BrowserAppInfo::captivePortal() || !isUrlResolved()
+            || currentUrl.startsWith(QLatin1String("about:")) || cleanedTitle.isEmpty()) {
+        return;
+    }
+
+    DBManager::instance()->updateTitle(tabId(), currentUrl, cleanedTitle);
+}
+
 void DeclarativeWebPage::grabToFile(const QSize &size)
 {
     // grabToImage handles invalid geometry.
@@ -531,6 +547,12 @@ void DeclarativeWebPage::onRecvAsyncMessage(const QString& message, const QVaria
         QString docuri = data.toMap().value("docuri").toString();
         if (docuri.startsWith("about:neterror") && !docuri.contains("e=netOffline"))
             emit neterror();
+    } else if (message == QLatin1String(PAGE_METADATA_MESSAGE)) {
+        const QVariantMap metadata = data.toMap();
+        const QString metadataUrl = metadata.value(QStringLiteral("url")).toString();
+        if (metadataUrl.isEmpty() || metadataUrl == url().toString()) {
+            updateMetadataTitle(metadata.value(QStringLiteral("title")).toString());
+        }
     } else if (message == QLatin1String(VIEWPORT_FIT_MESSAGE)) {
         QVariantMap viewportFitInfo = data.toMap();
         setViewportFit(viewportFitInfo.value(QStringLiteral("viewportFit")).toString());
