@@ -1,7 +1,7 @@
 %global min_xulrunner_version 115.35.1
 %global min_qtmozembed_version 1.56.0
 %global min_embedlite_components_version 1.23.0
-%global min_sailfishwebengine_version 1.6.0
+%global min_sailfishwebengine_version 1.7.0
 
 %global captiveportal sailfish-captiveportal
 
